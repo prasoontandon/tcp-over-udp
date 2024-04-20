@@ -8,6 +8,8 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class TCPsender {
     
@@ -25,13 +27,16 @@ public class TCPsender {
     private int seqNum; //Double check, will change throughout
     private int ackNum; //Double check if needed; DONT forget to init
 
-    private boolean completed; //Keeps track of completion status of our whole process
+    private volatile boolean completed; //Keeps track of completion status of our whole process
     private long TIME_OUT; //Keeps track of timeout, which will vary throughout the process
 
     private int numSegments;
     
     private ArrayList<TCP> allPackets;
-    private ArrayList<TCP> window;
+    private volatile int swL;
+    private volatile int swR;
+
+    private ConcurrentHashMap<Integer, Integer> numAcksMap;
     private ConcurrentHashMap<Integer, Integer> numRetransMap; 
     
     public TCPsender(int portNum, int remoteIP, int remotePort, String fileName, int mtu, int sws) {
@@ -61,11 +66,14 @@ public class TCPsender {
             this.completed = false;
             this.seqNum = 0;
             this.ackNum = 0;
-            this.TIME_OUT = 5; //Per the instructions
+            this.TIME_OUT = (long)5e+9; //Per the instructions
 
             //Init all data structures
             this.allPackets = new ArrayList<>(this.numSegments);
-            this.window = new ArrayList<>(this.sws);
+            this.swL = 0;
+            this.swR = 0; 
+
+            this.numAcksMap = new ConcurrentHashMap<>();
             this.numRetransMap = new ConcurrentHashMap<>();
 
             //Create all TCP packets
@@ -73,7 +81,6 @@ public class TCPsender {
             for(int s = 0; s < numSegments; s++) {
                 byte[] segment;
                 
-
                 if(s == numSegments - 1)
                     segment = new byte[finalSegmentSize];
                 else
@@ -88,11 +95,16 @@ public class TCPsender {
                 TCP packet = new TCP(sn, ack, System.nanoTime(), len, (short)0, segment);
                 this.allPackets.add(packet);
                 
-                //System.out.println(packet.dataToString());
+                System.out.println(packet.dataToString());
             }
         } catch(IOException e) {
             System.out.println("Unable to init TCPsender in init()");
             System.exit(1);
+        }
+
+        for(TCP t : allPackets) {
+            System.out.println(t);
+            System.out.println(t.dataToString());
         }
     }
 
@@ -164,8 +176,8 @@ public class TCPsender {
                     if((recPacket == null) || (((recPacket.getLength() & TCP.SYN_FLAG) != TCP.SYN_FLAG) && 
                                             ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG))) continue;
 
-
-                    TCP ackPacket = new TCP(recPacket.getAcknowledge(), recPacket.getSequenceNum() + 1, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
+                    seqNum++; //Update sequence number because syn counts as "1 byte"
+                    TCP ackPacket = new TCP(seqNum, ackNum, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
                     connectionEstablished = true;
                     sendTCP(ackPacket);
                 }
@@ -178,7 +190,7 @@ public class TCPsender {
             TCP synPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), (int)TCP.SYN_FLAG, (short)0, null);
             this.sendTCP(synPacket);
             numRetrans++;
-            try{ Thread.sleep(this.TIME_OUT); } catch(InterruptedException e) { continue; }
+            try{ Thread.sleep((long)(this.TIME_OUT/1e+6)); } catch(InterruptedException e) { continue; }
         }
 
         numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately
@@ -200,9 +212,8 @@ public class TCPsender {
             
          
             this.ackNum = returnPacket.getSequenceNum() + 1;
+            calcTimeout(returnPacket);
 
-            this.seqNum = returnPacket.getAcknowledge();
-            
             return returnPacket;
 
         }catch (IOException e) {
@@ -212,17 +223,91 @@ public class TCPsender {
     }
 
     public boolean transferData() {
-        return true;
-    }
 
-    /**
-     * Helper method to send data packets.
-     * Makes sure all content in packets is correct
-     * all important fields are updated 
-     * 
-     * and then calls sendTCP()
-     */
-    private boolean sendDataPackets() {
+        Thread writerThread = new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                while(!completed || swR < swL) {
+// System.out.println("In writerThread of sender 1");
+                    while(swR - swL == sws) {}
+
+                    if(swR >= allPackets.size()) return;
+// System.out.println("In writerThread of sender 2");
+                    TCP sendPacket = allPackets.get(swR);
+                    sendTCP(sendPacket);
+
+                    numAcksMap.put(sendPacket.getSequenceNum(), 0);
+                    numRetransMap.put(sendPacket.getSequenceNum(), 0);
+
+                    swR++;
+                }
+            }
+        });
+
+
+        Thread readerThread = new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+                while(!completed) {
+                    TCP receivePacket = receiveTCP();
+
+                    int numAck = (numAcksMap.containsKey(receivePacket.getAcknowledge())) ? numAcksMap.get(receivePacket.getAcknowledge()) + 1 : 0;
+                    numAcksMap.put(receivePacket.getAcknowledge(), numAck);
+                    
+                    seqNum = receivePacket.getAcknowledge();
+// System.out.println("In readerThread of sender 1");
+                    while(swL < allPackets.size() && allPackets.get(swL).getSequenceNum() < seqNum) swL++;
+// System.out.println("In readerThread of sender 2");
+                    if(swL >= allPackets.size()) completed = true;
+
+                    // System.out.println("Value of swl & swR: " + swL + " " + swR + " " + completed);
+                }
+                
+            }
+        });
+
+
+        TimerTask reTransTask = new TimerTask() {
+            @Override
+            public void run() {
+                for(int i = swL; i < swR; i++) {
+                    TCP currPacket = allPackets.get(i);
+
+                    //If numRetrans exceeded exit
+                    if (numRetransMap.get(currPacket.getSequenceNum()) >= 16) {
+                        System.out.println("Number of Retransmission exceeded for " + currPacket);
+                        System.exit(1);
+                    }
+                    //Check if timeout
+                    else if(System.nanoTime() - currPacket.getTimeStamp() > TIME_OUT) {
+                        for(int j = i; j < swR; j++) {
+                            TCP retransPacket = allPackets.get(j);
+                            sendTCP(retransPacket);
+                            numRetransMap.put(retransPacket.getSequenceNum(), numRetransMap.get(retransPacket.getSequenceNum()) + 1);
+                        }
+                        return;
+                    }
+                    //Check if ackNum exceeded
+                    else if(numAcksMap.get(currPacket.getSequenceNum()) >= 3) {
+                        sendTCP(currPacket);
+                        numRetransMap.put(currPacket.getSequenceNum(), numRetransMap.get(currPacket.getSequenceNum()) + 1);
+                    }
+                }
+            }
+        };
+
+        writerThread.start();
+        readerThread.start();
+        
+        Timer timer = new Timer(true); //isDaemon flag is set so that task runs in background
+        timer.schedule(reTransTask, 0 , 1000);
+
+        while(!completed){}
+
+// System.out.println("Special print in sender!");
         return true;
     }
 
@@ -241,7 +326,7 @@ public class TCPsender {
                     if((recPacket == null) || (((recPacket.getLength() & TCP.FIN_FLAG) != TCP.FIN_FLAG) && 
                                             ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG))) continue;
 
-
+                    seqNum++; //Update sequence number because fin counts as "1 byte"
                     TCP ackPacket = new TCP(seqNum, ackNum, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
                     connectionTerminated = true;
                     sendTCP(ackPacket);
@@ -255,7 +340,7 @@ public class TCPsender {
             TCP finPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), (int)TCP.FIN_FLAG, (short)0, null);
             this.sendTCP(finPacket);
             numRetrans++;
-            try{ Thread.sleep(this.TIME_OUT); } catch(InterruptedException e) { continue; }
+            try{ Thread.sleep((long)(this.TIME_OUT/1e+6)); } catch(InterruptedException e) { continue; }
         }
 
         numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately

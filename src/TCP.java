@@ -65,6 +65,10 @@ public class TCP {
         return this;
     }
 
+    public byte[] getData() {
+        return this.data;
+    }
+
     public short getChecksum() {
         return this.checksum;
     }
@@ -231,6 +235,9 @@ public class TCP {
 
     public String dataToString() {
         String s = "";
+
+        if (data == null) return s;
+        
         for(byte b : data)
             s += (char)b;
 

@@ -1,5 +1,7 @@
 Questions:
 
+Why does the receiver need sws and mtu?
+
 Do we only get one chance at handshake? If not, what's the timout? ==> Currently assuming no!
 
 What units is time in for the print statements in send and rec()?

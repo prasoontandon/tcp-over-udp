@@ -9,10 +9,10 @@ tests: build
 	java -classpath src/ TCPTests
 
 rec:
-	java -classpath src/ TCPend -p 5000 -m 1234 -c 1234 -f tmpF.txt
+	java -classpath src/ TCPend -p 5000 -m 1234 -c 1234 -f outputFile.txt
 
 sen:
-	java -classpath src/ TCPend -p 8888 -s 2130706433 -a 5000 -f testFile.txt -m 27 -c 1234
+	java -classpath src/ TCPend -p 8888 -s 2130706433 -a 5000 -f testFile.txt -m 30 -c 3
 
 clean:
 	rm -rf src/*.class
