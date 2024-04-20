@@ -1,0 +1,47 @@
+Questions:
+
+Do we only get one chance at handshake? If not, what's the timout? ==> Currently assuming no!
+
+What units is time in for the print statements in send and rec()?
+
+What happens if number of retrans limit is hit for closing do we still close sockets? ===> Currently assuming yes!
+
+
+TODOs:
+
+Change TCPend so that usage is printed when BOTH !=12 AND != 8 are true     (DONE)
+Add toString methods to help debug                                          (DONE)
+
+Write checksum method                                                       (DONE)
+Write serialize and deserialize methods                                     (DONE)
+Add unit tests for serialize and deserialize b/c they are important         (PARTIAL)
+
+Add and init additional data structures to maintain:                        (NEEDS REVIEW)
+    Num of retransmits  
+    Timeout
+    window
+    All possible packets
+
+Add init functions to                                                       (NEEDS REVIEW)
+    Above inits
+    Creat all possible packets
+
+Write timeout calculation method                                            (NEEDS REVIEW)
+
+Don't forget to add the summary print statements
+
+Write code to send packet                                                   (DONE)
+    Test by sending data one-way with no response expectations
+
+Write code to establish connection                                          (DONE)
+    Sender will have an establish method
+    Receiver must first open passive connection
+    Receiver will likely have a generic "listen" thereafter
+
+Write code to receive packet                                                (DONE)
+
+Write code to terminate connection                                          (DONE)
+
+Update receive and send code to handle sliding window
+
+Will likely need to modify Makefile so that it isn't looking at src folder
