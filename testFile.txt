@@ -1,1 +1,1 @@
-Hello World this is John & Prasoon's project for CS640 P4!
+Hello World this is John & Prasoon's CS640 P4!

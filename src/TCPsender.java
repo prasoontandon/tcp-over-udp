@@ -62,7 +62,7 @@ public class TCPsender {
             File file = new File(this.fileName);
             fileAsBytes = Files.readAllBytes(file.toPath());
 
-            this.numSegments = (int)Math.ceil(((double)fileAsBytes.length)/(this.mtu - TCP.SIZE_OF_HEADER));
+            this.numSegments = (int)Math.ceil(((double)fileAsBytes.length)/(this.mtu));
             this.completed = false;
             this.seqNum = 0;
             this.ackNum = 0;
@@ -77,19 +77,19 @@ public class TCPsender {
             this.numRetransMap = new ConcurrentHashMap<>();
 
             //Create all TCP packets
-            int finalSegmentSize = fileAsBytes.length - (this.mtu - TCP.SIZE_OF_HEADER)*(this.numSegments - 1);
+            int finalSegmentSize = fileAsBytes.length - (this.mtu)*(this.numSegments - 1);
             for(int s = 0; s < numSegments; s++) {
                 byte[] segment;
                 
                 if(s == numSegments - 1)
                     segment = new byte[finalSegmentSize];
                 else
-                    segment = new byte[this.mtu - TCP.SIZE_OF_HEADER];
+                    segment = new byte[this.mtu];
 
                 for(int b = 0; b < segment.length; b++)
-                    segment[b] = fileAsBytes[(s*(this.mtu - TCP.SIZE_OF_HEADER)) + b];
+                    segment[b] = fileAsBytes[(s*(this.mtu)) + b];
                 
-                int sn = s*(this.mtu - TCP.SIZE_OF_HEADER) + 1; //+1 for 0th segment after ACK, assuming sn_init = 0
+                int sn = s*(this.mtu) + 1; //+1 for 0th segment after ACK, assuming init sequenceNumber is 0
                 int ack = -1; //BEFORE SENDING UPDATE!
                 int len = (segment.length << 3) + TCP.ACK_FLAG;
                 TCP packet = new TCP(sn, ack, System.nanoTime(), len, (short)0, segment);
@@ -97,8 +97,10 @@ public class TCPsender {
                 
                 System.out.println(packet.dataToString());
             }
+            System.out.println("size of file (in bytes): " + fileAsBytes.length);
         } catch(IOException e) {
             System.out.println("Unable to init TCPsender in init()");
+            e.printStackTrace();
             System.exit(1);
         }
 
@@ -132,9 +134,11 @@ public class TCPsender {
 
         } catch(UnknownHostException e1) {
             System.out.println("Failed to find host in sendTCP() of TCPsender");
+            e1.printStackTrace();
             System.exit(1);
         } catch(IOException e2) {
             System.out.println("Failed to send packet in sendTCP() of TCPsender");
+            e2.printStackTrace();
             System.exit(1);
         }
     }
@@ -159,11 +163,13 @@ public class TCPsender {
 
         try {
             this.socket = new DatagramSocket(this.portNum, InetAddress.getByName("localhost"));
-        } catch(SocketException e) {
+        } catch(SocketException e1) {
             System.out.println("Failed to create socket in TCPsender. Exiting");
+            e1.printStackTrace();
             return false;
-        } catch(UnknownHostException e1) {
+        } catch(UnknownHostException e2) {
             System.out.println("Failed to create socket in TCPsender. Exiting");
+            e2.printStackTrace();
             return false;
         }
 
@@ -200,7 +206,7 @@ public class TCPsender {
     public TCP receiveTCP() {
 
         try {
-            byte[] data = new byte[this.mtu];
+            byte[] data = new byte[this.mtu + TCP.SIZE_OF_HEADER];
             DatagramPacket receivePacket = new DatagramPacket(data, data.length);
             this.socket.receive(receivePacket);
             
@@ -218,6 +224,7 @@ public class TCPsender {
 
         }catch (IOException e) {
             System.out.println("IOException occured in receiveTCP()");
+            e.printStackTrace();
             return null;
         }
     }
@@ -331,6 +338,7 @@ public class TCPsender {
                     connectionTerminated = true;
                     sendTCP(ackPacket);
                 }
+                socket.close(); //We should only close once the final ack is sent, because no return ack is expected!
             }
         });
 
@@ -344,7 +352,7 @@ public class TCPsender {
         }
 
         numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately
-        this.socket.close();
+        // this.socket.close();
         return connectionTerminated;
     }
 

@@ -59,9 +59,11 @@ public class TCPreceiver {
 
         } catch(UnknownHostException e1) {
             System.out.println("Failed to find host in sendTCP() of TCPreceiver");
+            e1.printStackTrace();
             System.exit(1);
         } catch(IOException e2) {
             System.out.println("Failed to send packet in sendTCP() of TCPreceiver");
+            e2.printStackTrace();
             System.exit(1);
         }
     }
@@ -71,11 +73,13 @@ public class TCPreceiver {
         //Passive open
         try {
             this.socket = new DatagramSocket(this.portNum, InetAddress.getByName("localhost"));
-        } catch(SocketException e) {
+        } catch(SocketException e1) {
             System.out.println("Failed to create socket in TCPreceiver. Exiting");
+            e1.printStackTrace();
             return;
-        } catch(UnknownHostException e1) {
+        } catch(UnknownHostException e2) {
             System.out.println("Failed to create socket in TCPreceiver. Exiting");
+            e2.printStackTrace();
             return;
         }
 
@@ -126,13 +130,13 @@ public class TCPreceiver {
 
         writeToFile();
 
-        socket.close();
+        socket.close(); //We should close AFTER receiving the terminating ack from sender
     }
 
     public TCP receiveTCP() {
 
         try {
-            byte[] data = new byte[this.mtu];
+            byte[] data = new byte[this.mtu + TCP.SIZE_OF_HEADER];
             DatagramPacket receivePacket = new DatagramPacket(data, data.length);
     // System.out.println("REACHED SOCKET RECEIVE");
             this.socket.receive(receivePacket);
@@ -163,6 +167,7 @@ public class TCPreceiver {
 
         }catch (IOException e) {
             System.out.println("IOException occured in receiveTCP()");
+            e.printStackTrace();
             return null;
         }
     }
@@ -182,6 +187,7 @@ public class TCPreceiver {
 
         }catch(IOException e) {
             System.out.println("Unable to write to file in TCPreceiver writeToFile()");
+            e.printStackTrace();
             System.exit(1);
         }
     }
