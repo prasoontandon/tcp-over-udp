@@ -1,0 +1,228 @@
+The Transmission Control Protocol (TCP) is intended for use as a highly
+reliable host-to-host protocol between hosts in packet-switched computer
+communication networks, and in interconnected systems of such networks.
+
+This document describes the functions to be performed by the
+Transmission Control Protocol, the program that implements it, and its
+interface to programs or users that require its services.
+
+1.1.  Motivation
+
+  Computer communication systems are playing an increasingly important
+  role in military, government, and civilian environments.  This
+  document focuses its attention primarily on military computer
+  communication requirements, especially robustness in the presence of
+  communication unreliability and availability in the presence of
+  congestion, but many of these problems are found in the civilian and
+  government sector as well.
+
+  As strategic and tactical computer communication networks are
+  developed and deployed, it is essential to provide means of
+  interconnecting them and to provide standard interprocess
+  communication protocols which can support a broad range of
+  applications.  In anticipation of the need for such standards, the
+  Deputy Undersecretary of Defense for Research and Engineering has
+  declared the Transmission Control Protocol (TCP) described herein to
+  be a basis for DoD-wide inter-process communication protocol
+  standardization.
+
+  TCP is a connection-oriented, end-to-end reliable protocol designed to
+  fit into a layered hierarchy of protocols which support multi-network
+  applications.  The TCP provides for reliable inter-process
+  communication between pairs of processes in host computers attached to
+  distinct but interconnected computer communication networks.  Very few
+  assumptions are made as to the reliability of the communication
+  protocols below the TCP layer.  TCP assumes it can obtain a simple,
+  potentially unreliable datagram service from the lower level
+  protocols.  In principle, the TCP should be able to operate above a
+  wide spectrum of communication systems ranging from hard-wired
+  connections to packet-switched or circuit-switched networks.
+
+                                                          September 1981
+Transmission Control Protocol
+Introduction
+
+
+  TCP is based on concepts first described by Cerf and Kahn in [1].  The
+  TCP fits into a layered protocol architecture just above a basic
+  Internet Protocol [2] which provides a way for the TCP to send and
+  receive variable-length segments of information enclosed in internet
+  datagram "envelopes".  The internet datagram provides a means for
+  addressing source and destination TCPs in different networks.  The
+  internet protocol also deals with any fragmentation or reassembly of
+  the TCP segments required to achieve transport and delivery through
+  multiple networks and interconnecting gateways.  The internet protocol
+  also carries information on the precedence, security classification
+  and compartmentation of the TCP segments, so this information can be
+  communicated end-to-end across multiple networks.
+
+  Much of this document is written in the context of TCP implementations
+  which are co-resident with higher level protocols in the host
+  computer.  Some computer systems will be connected to networks via
+  front-end computers which house the TCP and internet protocol layers,
+  as well as network specific software.  The TCP specification describes
+  an interface to the higher level protocols which appears to be
+  implementable even for the front-end case, as long as a suitable
+  host-to-front end protocol is implemented.
+
+1.2.  Scope
+
+  The TCP is intended to provide a reliable process-to-process
+  communication service in a multinetwork environment.  The TCP is
+  intended to be a host-to-host protocol in common use in multiple
+  networks.
+
+1.3.  About this Document
+
+  This document represents a specification of the behavior required of
+  any TCP implementation, both in its interactions with higher level
+  protocols and in its interactions with other TCPs.  The rest of this
+
+
+September 1981                                                          
+                                           Transmission Control Protocol
+                                                            Introduction
+
+  section offers a very brief view of the protocol interfaces and
+  operation.  Section 2 summarizes the philosophical basis for the TCP
+  design.  Section 3 offers both a detailed description of the actions
+  required of TCP when various events occur (arrival of new segments,
+  user calls, errors, etc.) and the details of the formats of TCP
+  segments.
+
+1.4.  Interfaces
+
+  The TCP interfaces on one side to user or application processes and on
+  the other side to a lower level protocol such as Internet Protocol.
+
+  The interface between an application process and the TCP is
+  illustrated in reasonable detail.  This interface consists of a set of
+  calls much like the calls an operating system provides to an
+  application process for manipulating files.  For example, there are
+  calls to open and close connections and to send and receive data on
+  established connections.  It is also expected that the TCP can
+  asynchronously communicate with application programs.  Although
+  considerable freedom is permitted to TCP implementors to design
+  interfaces which are appropriate to a particular operating system
+  environment, a minimum functionality is required at the TCP/user
+  interface for any valid implementation.
+
+  The interface between TCP and lower level protocol is essentially
+  unspecified except that it is assumed there is a mechanism whereby the
+  two levels can asynchronously pass information to each other.
+  Typically, one expects the lower level protocol to specify this
+  interface.  TCP is designed to work in a very general environment of
+  interconnected networks.  The lower level protocol which is assumed
+  throughout this document is the Internet Protocol [2].
+
+1.5.  Operation
+
+  As noted above, the primary purpose of the TCP is to provide reliable,
+  securable logical circuit or connection service between pairs of
+  processes.  To provide this service on top of a less reliable internet
+  communication system requires facilities in the following areas:
+
+    Basic Data Transfer
+    Reliability
+    Flow Control
+    Multiplexing
+    Connections
+    Precedence and Security
+
+  The basic operation of the TCP in each of these areas is described in
+  the following paragraphs.
+
+                                                          September 1981
+Transmission Control Protocol
+Introduction
+
+
+  Basic Data Transfer:
+
+    The TCP is able to transfer a continuous stream of octets in each
+    direction between its users by packaging some number of octets into
+    segments for transmission through the internet system.  In general,
+    the TCPs decide when to block and forward data at their own
+    convenience.
+
+    Sometimes users need to be sure that all the data they have
+    submitted to the TCP has been transmitted.  For this purpose a push
+    function is defined.  To assure that data submitted to a TCP is
+    actually transmitted the sending user indicates that it should be
+    pushed through to the receiving user.  A push causes the TCPs to
+    promptly forward and deliver data up to that point to the receiver.
+    The exact push point might not be visible to the receiving user and
+    the push function does not supply a record boundary marker.
+
+  Reliability:
+
+    The TCP must recover from data that is damaged, lost, duplicated, or
+    delivered out of order by the internet communication system.  This
+    is achieved by assigning a sequence number to each octet
+    transmitted, and requiring a positive acknowledgment (ACK) from the
+    receiving TCP.  If the ACK is not received within a timeout
+    interval, the data is retransmitted.  At the receiver, the sequence
+    numbers are used to correctly order segments that may be received
+    out of order and to eliminate duplicates.  Damage is handled by
+    adding a checksum to each segment transmitted, checking it at the
+    receiver, and discarding damaged segments.
+
+    As long as the TCPs continue to function properly and the internet
+    system does not become completely partitioned, no transmission
+    errors will affect the correct delivery of data.  TCP recovers from
+    internet communication system errors.
+
+  Flow Control:
+
+    TCP provides a means for the receiver to govern the amount of data
+    sent by the sender.  This is achieved by returning a "window" with
+    every ACK indicating a range of acceptable sequence numbers beyond
+    the last segment successfully received.  The window indicates an
+    allowed number of octets that the sender may transmit before
+    receiving further permission.
+
+September 1981                                                          
+                                           Transmission Control Protocol
+                                                            Introduction
+
+  Multiplexing:
+
+    To allow for many processes within a single Host to use TCP
+    communication facilities simultaneously, the TCP provides a set of
+    addresses or ports within each host.  Concatenated with the network
+    and host addresses from the internet communication layer, this forms
+    a socket.  A pair of sockets uniquely identifies each connection.
+    That is, a socket may be simultaneously used in multiple
+    connections.
+
+    The binding of ports to processes is handled independently by each
+    Host.  However, it proves useful to attach frequently used processes
+    (e.g., a "logger" or timesharing service) to fixed sockets which are
+    made known to the public.  These services can then be accessed
+    through the known addresses.  Establishing and learning the port
+    addresses of other processes may involve more dynamic mechanisms.
+
+  Connections:
+
+    The reliability and flow control mechanisms described above require
+    that TCPs initialize and maintain certain status information for
+    each data stream.  The combination of this information, including
+    sockets, sequence numbers, and window sizes, is called a connection.
+    Each connection is uniquely specified by a pair of sockets
+    identifying its two sides.
+
+    When two processes wish to communicate, their TCP's must first
+    establish a connection (initialize the status information on each
+    side).  When their communication is complete, the connection is
+    terminated or closed to free the resources for other uses.
+
+    Since connections must be established between unreliable hosts and
+    over the unreliable internet communication system, a handshake
+    mechanism with clock-based sequence numbers is used to avoid
+    erroneous initialization of connections.
+
+  Precedence and Security:
+
+    The users of TCP may indicate the security and precedence of their
+    communication.  Provision is made for default values to be used when
+    these features are not needed.

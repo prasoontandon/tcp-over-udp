@@ -1,13 +1,13 @@
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.DatagramPacket;
 import java.net.InetAddress;
 import java.net.SocketException;
 import java.net.UnknownHostException;
-import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 
-import java.io.FileOutputStream;
-import java.io.File;
 
 public class TCPreceiver {
     
@@ -16,13 +16,20 @@ public class TCPreceiver {
     protected int sws;
     protected String fileName;
 
-    private InetAddress remoteIP;
-    private int remotePort;
+    private InetAddress remoteIP; //init when first SYN packet is received
+    private int remotePort;       //init when first SYN packet is received
     private DatagramSocket socket;
-    private int seqNum; //Double check, will change throughout
-    private int ackNum; //Double check if needed; DONT forget to init
 
+    private int seqNum; //Double check, will change throughout
+    private int ackNum; //Double check if needed
+
+    /** HashMap to keep track of received segments, i.e data buffer*/
     private ConcurrentHashMap<Integer, byte[]> dataBuffer;
+
+    /** Statistics of data transfer*/
+    private int AMOUNT_DATA_REC;
+    private int NUM_PACKETS_REC;
+    private int NUM_PACKETS_DISCARDED_CHECKSUM;
 
     public TCPreceiver(int portNum, int mtu, int sws, String fileName) {
         this.portNum = portNum;
@@ -41,11 +48,11 @@ public class TCPreceiver {
      */
     public void sendTCP(TCP tcpPacket) {
 
-        tcpPacket.setAcknowledge(this.ackNum); //Set ack field
+        tcpPacket.setAcknowledge(this.ackNum); //Set ack field (will change throughout)
 
         tcpPacket.setTimeStamp(System.nanoTime()); //Set time field
 
-        byte[] serialized = tcpPacket.serialize(); //Serialize
+        byte[] serialized = tcpPacket.serialize(); //Serialize (proper checksum will be added)
         
         //Send
         try {
@@ -72,14 +79,10 @@ public class TCPreceiver {
 
         //Passive open
         try {
-            this.socket = new DatagramSocket(this.portNum, InetAddress.getByName("localhost"));
+            this.socket = new DatagramSocket(this.portNum);
         } catch(SocketException e1) {
             System.out.println("Failed to create socket in TCPreceiver. Exiting");
             e1.printStackTrace();
-            return;
-        } catch(UnknownHostException e2) {
-            System.out.println("Failed to create socket in TCPreceiver. Exiting");
-            e2.printStackTrace();
             return;
         }
 
@@ -119,7 +122,7 @@ public class TCPreceiver {
 
                 //NOTE: Don't forget to update this.ackNum to account for gaps
                 while(dataBuffer.containsKey(this.ackNum)) {
-                    System.out.println("We shouldn't be here in receiver()!");
+                    // System.out.println("We shouldn't be here in receiver()!");
                     this.ackNum += dataBuffer.get(this.ackNum).length;
                 }
 // System.out.println("About to send ACK in receiver");
@@ -128,9 +131,13 @@ public class TCPreceiver {
             }
         }
 
+        //Lazy write
         writeToFile();
 
         socket.close(); //We should close AFTER receiving the terminating ack from sender
+
+        //Print statistics only when everything goes well
+        this.printStats();
     }
 
     public TCP receiveTCP() {
@@ -156,16 +163,10 @@ public class TCPreceiver {
 
             System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
-            
-            // if((returnPacket.getLength() >>> 3) > 0) {
-            //     this.ackNum = (returnPacket.getSequenceNum() == this.ackNum) ? returnPacket.getSequenceNum() + (returnPacket.getLength() >>> 3) : this.ackNum;
-            // } else {
-            //     this.ackNum = returnPacket.getSequenceNum() + 1;
-            // }
-            
+                        
             return returnPacket;
 
-        }catch (IOException e) {
+        } catch (IOException e) {
             System.out.println("IOException occured in receiveTCP()");
             e.printStackTrace();
             return null;
@@ -185,11 +186,22 @@ public class TCPreceiver {
             }
             outStream.close();
 
-        }catch(IOException e) {
+        } catch(IOException e) {
             System.out.println("Unable to write to file in TCPreceiver writeToFile()");
             e.printStackTrace();
             System.exit(1);
         }
+    }
+
+    /**
+     * Prints statistics after a successful TCP sesssion 
+     */
+    private void printStats() {
+
+        System.out.print(String.format("Amount of Data received: %d\n" +  
+                                        "Number of packets received: %d\n" + 
+                                        "Number of packets discarded due to incorrect checksum: %d\n",
+                                        this.AMOUNT_DATA_REC, this.NUM_PACKETS_REC, this.NUM_PACKETS_DISCARDED_CHECKSUM));
     }
 
     @Override

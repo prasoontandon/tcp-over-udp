@@ -15,7 +15,7 @@ public class TCPend {
         if(args.length != 12 && args.length != 8) printUsage();
 
         int portNum = 0;
-        int remoteIP = 0;
+        String remoteIP = null;
         int remotePort = 0;
         String fileName = null;
         int mtu = 0;
@@ -28,7 +28,7 @@ public class TCPend {
                 portNum = Integer.parseInt(args[++i]);
             }
             else if(arg.equals("-s")) {
-                remoteIP = Integer.parseInt(args[++i]);
+                remoteIP = args[++i];
             }
             else if(arg.equals("-a")) {
                 remotePort = Integer.parseInt(args[++i]);
