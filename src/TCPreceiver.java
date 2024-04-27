@@ -31,6 +31,9 @@ public class TCPreceiver {
     private int NUM_PACKETS_REC;
     private int NUM_PACKETS_DISCARDED_CHECKSUM;
 
+    /**
+     * Constructor for TCPreceiver
+     */
     public TCPreceiver(int portNum, int mtu, int sws, String fileName) {
         this.portNum = portNum;
         this.mtu = mtu;
@@ -40,6 +43,74 @@ public class TCPreceiver {
         this.seqNum = 0;
         this.ackNum = 0;
         this.dataBuffer = new ConcurrentHashMap<>();
+    }
+
+    /**
+     * Runs our TCPreceiver through various phases
+     */
+    public void run(){
+
+        //Passive open
+        try {
+            this.socket = new DatagramSocket(this.portNum);
+        } catch(SocketException e1) {
+            System.out.println("Failed to create socket in TCPreceiver. Exiting");
+            e1.printStackTrace();
+            return;
+        }
+
+        boolean isRunning = true;
+        boolean terminationRequested = false;
+        while(isRunning) {
+            TCP receivePacket = receiveTCP();
+            if(receivePacket == null) continue;
+
+            this.NUM_PACKETS_REC++;
+            byte flag = (byte)(receivePacket.getLength() & 0x07);
+
+            //Case 1: Syn Packet
+            if((flag & TCP.SYN_FLAG) == TCP.SYN_FLAG) {
+                this.ackNum = receivePacket.getSequenceNum() + 1;
+                TCP synAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.SYN_FLAG + TCP.ACK_FLAG, (short)0, null);
+                this.sendTCP(synAckPacket);
+            }
+            //Case 2a: Fin Packet
+            else if((flag & TCP.FIN_FLAG) == TCP.FIN_FLAG) {
+                this.ackNum = receivePacket.getSequenceNum() + 1;
+                this.seqNum++; //Update sequence num here only, because receiver never sends data
+                
+                TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
+                this.sendTCP(finAckPacket);
+                terminationRequested = true;
+                
+                //Lazy write
+                writeToFile();
+            }
+            //Case 2b: Ack Packet for termination
+            else if(((flag & TCP.ACK_FLAG) == TCP.ACK_FLAG) && terminationRequested) {
+                isRunning = false;
+            }
+            //Case 4: Data Packet
+            else if((receivePacket.getLength() >>> 3) > 0) {
+
+                this.ackNum = (receivePacket.getSequenceNum() == this.ackNum) ? receivePacket.getSequenceNum() + (receivePacket.getLength() >>> 3) : this.ackNum;
+                this.AMOUNT_DATA_REC += (receivePacket.getLength() >>> 3);
+
+                byte[] packetData = (dataBuffer.containsKey(receivePacket.getSequenceNum())) ? dataBuffer.get(receivePacket.getSequenceNum()): receivePacket.getData();
+                dataBuffer.put(receivePacket.getSequenceNum(), packetData);
+
+                //Update this.ackNum to account for gaps
+                while(dataBuffer.containsKey(this.ackNum)) { this.ackNum += dataBuffer.get(this.ackNum).length; }
+
+                TCP ackPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.ACK_FLAG, (short)0, null);
+                this.sendTCP(ackPacket);
+            }
+        }
+
+        socket.close(); //We should close AFTER receiving the terminating ack from sender
+
+        //Print statistics only when everything goes well
+        this.printStats();
     }
 
     /**
@@ -75,99 +146,29 @@ public class TCPreceiver {
         }
     }
 
-    public void run(){
-
-        //Passive open
-        try {
-            this.socket = new DatagramSocket(this.portNum);
-        } catch(SocketException e1) {
-            System.out.println("Failed to create socket in TCPreceiver. Exiting");
-            e1.printStackTrace();
-            return;
-        }
-
-        boolean isRunning = true;
-        boolean terminationRequested = false;
-        while(isRunning) {
-            TCP receivePacket = receiveTCP();
-            if(receivePacket == null) continue;
-
-            this.NUM_PACKETS_REC++;
-            byte flag = (byte)(receivePacket.getLength() & 0x07);
-
-            //Case 1: Syn Packet
-            if((flag & TCP.SYN_FLAG) == TCP.SYN_FLAG) {
-                this.ackNum = receivePacket.getSequenceNum() + 1;
-                TCP synAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.SYN_FLAG + TCP.ACK_FLAG, (short)0, null);
-                this.sendTCP(synAckPacket);
-            }
-            //Case 2-a: Fin Packet
-            else if((flag & TCP.FIN_FLAG) == TCP.FIN_FLAG) {
-                this.ackNum = receivePacket.getSequenceNum() + 1;
-                this.seqNum++; //Update sequence num here only, because receiver never sends data
-                TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
-                this.sendTCP(finAckPacket);
-                terminationRequested = true;
-                
-                //Lazy write
-                writeToFile();
-            }
-            //Case 2-b: Ack Packet for termination
-            else if(((flag & TCP.ACK_FLAG) == TCP.ACK_FLAG) && terminationRequested) {
-                isRunning = false;
-            }
-            //Case 4: Data Packet
-            else if((receivePacket.getLength() >>> 3) > 0) {
-
-                this.ackNum = (receivePacket.getSequenceNum() == this.ackNum) ? receivePacket.getSequenceNum() + (receivePacket.getLength() >>> 3) : this.ackNum;
-                this.AMOUNT_DATA_REC += (receivePacket.getLength() >>> 3);
-
-                byte[] packetData = (dataBuffer.containsKey(receivePacket.getSequenceNum())) ? dataBuffer.get(receivePacket.getSequenceNum()): receivePacket.getData();
-                dataBuffer.put(receivePacket.getSequenceNum(), packetData);
-
-                //NOTE: Don't forget to update this.ackNum to account for gaps
-                while(dataBuffer.containsKey(this.ackNum)) {
-                    // System.out.println("We shouldn't be here in receiver()!");
-                    this.ackNum += dataBuffer.get(this.ackNum).length;
-                }
-// System.out.println("About to send ACK in receiver");
-                TCP ackPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.ACK_FLAG, (short)0, null);
-                this.sendTCP(ackPacket);
-            }
-        }
-
-        // //Lazy write
-        // writeToFile();
-
-        socket.close(); //We should close AFTER receiving the terminating ack from sender
-
-        //Print statistics only when everything goes well
-        this.printStats();
-    }
-
+    /**
+     * Receieves a TCP packet using DatagramSocket
+     */
     public TCP receiveTCP() {
 
         try {
             byte[] data = new byte[this.mtu + TCP.SIZE_OF_HEADER];
             DatagramPacket receivePacket = new DatagramPacket(data, data.length);
-    // System.out.println("REACHED SOCKET RECEIVE");
+
             this.socket.receive(receivePacket);
 
             this.remoteIP = receivePacket.getAddress();
             this.remotePort = receivePacket.getPort();
             
             TCP returnPacket = new TCP();
-            returnPacket = returnPacket.deserialize(data, 0, data.length);
+            returnPacket.deserialize(data, 0, data.length);
 
             short savedChecksum = returnPacket.getChecksum();
-            returnPacket = returnPacket.resetChecksum();
+            returnPacket.resetChecksum();
             byte[] tempPacket = returnPacket.serialize();
-            returnPacket = returnPacket.deserialize(tempPacket, 0, tempPacket.length);
+            returnPacket.deserialize(tempPacket, 0, tempPacket.length);
 
             if(savedChecksum != returnPacket.getChecksum()) {
-                System.out.println("Checksum doesn't match for packet: " + returnPacket);
-                System.out.println("Data in packet: " + returnPacket.dataToString());
-                System.out.println("Expected, Result: " + savedChecksum + " " + returnPacket.getChecksum());
                 this.NUM_PACKETS_DISCARDED_CHECKSUM++;
                 return null;
             }
@@ -184,6 +185,9 @@ public class TCPreceiver {
         }
     }
 
+    /**
+     * Helper method to write all contents from buffer to file
+     */
     public void writeToFile() {
 
         try {
@@ -208,7 +212,6 @@ public class TCPreceiver {
      * Prints statistics after a successful TCP sesssion 
      */
     private void printStats() {
-
         System.out.print(String.format("Amount of Data received: %d\n" +  
                                         "Number of packets received: %d\n" + 
                                         "Number of packets discarded due to incorrect checksum: %d\n",

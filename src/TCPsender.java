@@ -28,9 +28,7 @@ public class TCPsender {
 
     private volatile boolean completed; //Keeps track of completion status of our whole process
     private long TIME_OUT; //Keeps track of timeout (in nanoseconds), which will vary throughout the process
-
-    private int numSegments; //DOES THIS NEED TO BE GLOBAL?!
-    
+  
     private ArrayList<TCP> allPackets;
     private volatile int swL; //Sliding window pointer (left)
     private volatile int swR; //Sliding window pointer (right)
@@ -72,14 +70,14 @@ public class TCPsender {
             File file = new File(this.fileName);
             fileAsBytes = Files.readAllBytes(file.toPath());
 
-            this.numSegments = (int)Math.ceil(((double)fileAsBytes.length)/(this.mtu));
+            int numSegments = (int)Math.ceil(((double)fileAsBytes.length)/(this.mtu));
             this.completed = false;
             this.seqNum = 0;
             this.ackNum = 0;
             this.TIME_OUT = (long)5e+9; //Per the instructions
 
             //Init all data structures
-            this.allPackets = new ArrayList<>(this.numSegments);
+            this.allPackets = new ArrayList<>(numSegments);
             this.swL = 0;
             this.swR = 0; 
 
@@ -88,8 +86,8 @@ public class TCPsender {
             this.timeoutMap = new ConcurrentHashMap<>();
 
             //Create all TCP packets
-            int finalSegmentSize = fileAsBytes.length - (this.mtu)*(this.numSegments - 1);
-            for(int s = 0; s < this.numSegments; s++) {
+            int finalSegmentSize = fileAsBytes.length - (this.mtu)*(numSegments - 1);
+            for(int s = 0; s < numSegments; s++) {
                 byte[] segment;
                 
                 if(s == numSegments - 1)
@@ -105,60 +103,17 @@ public class TCPsender {
                 int len = (segment.length << 3) + TCP.ACK_FLAG;
                 TCP packet = new TCP(sn, ack, System.nanoTime(), len, (short)0, segment);
                 this.allPackets.add(packet);
-                
-                // System.out.println(packet.dataToString());
             }
-            // System.out.println("size of file (in bytes): " + fileAsBytes.length);
         } catch(IOException e) {
             System.out.println("Unable to init TCPsender in init()");
             e.printStackTrace();
             System.exit(1);
         }
-
-        for(TCP t : allPackets) {
-            System.out.println(t);
-            //System.out.println(t.dataToString());
-        }
     }
 
     /**
-     * Simply sends the desired tcpPacket using DatagramSocket.
-     * Correct content is responsibility of caller
+     * Runs our TCPsender through various phases
      */
-    public void sendTCP(TCP tcpPacket) {
-
-        tcpPacket.setAcknowledge(this.ackNum); //Set ack field (which rarely changes)
-
-        tcpPacket.setTimeStamp(System.nanoTime()); //Set time field
-
-        byte[] serialized = tcpPacket.serialize(); //Serialize (proper checksum will be added)
-        System.out.println("About to send: " + tcpPacket);
-        
-        //Send
-        try {
-            DatagramPacket datagramPacket = new DatagramPacket(serialized, serialized.length, 
-                                        InetAddress.getByName(this.remoteIP), this.remotePort);
-
-            this.socket.send(datagramPacket);
-            
-            this.NUM_PACKETS_SENT++;
-            if((tcpPacket.getLength() >>> 3) > 0) { this.AMOUNT_DATA_TRANS += (tcpPacket.getLength() >>> 3); }
-
-            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
-                    tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
-
-            // System.out.println("About to send: " + tcpPacket);
-            // System.out.println("With data: " + tcpPacket.dataToString());
-
-        } catch(UnknownHostException e1) {
-            System.out.println("Failed to find host in sendTCP() of TCPsender");
-            e1.printStackTrace();
-            System.exit(1);
-        } catch(IOException e2) {
-            //Do nothing
-        }
-    }
-
     public void run(){
         
         //Establish connection (3-way handshake)
@@ -175,9 +130,11 @@ public class TCPsender {
         this.printStats();
     }
 
-    boolean connectionEstablished = false;
-    int numRetrans = 0;
-    
+    boolean connectionEstablished = false; //Placed here so it is visible in threads below
+    int numRetrans = 0;  
+    /**
+     * Establish connection with the receiver using 3-way handshake
+     */
     public boolean establishConnection() {
 
         try {
@@ -189,7 +146,6 @@ public class TCPsender {
         }
 
         Thread listenThread = new Thread(new Runnable() {
-
             @Override
             public void run() {
                 while(!connectionEstablished && numRetrans < TCP.MAX_NUM_RETRANS) {
@@ -222,45 +178,20 @@ public class TCPsender {
         return connectionEstablished;
     }
 
-    public TCP receiveTCP() {
-
-        try {
-            byte[] data = new byte[this.mtu + TCP.SIZE_OF_HEADER];
-            DatagramPacket receivePacket = new DatagramPacket(data, data.length);
-            this.socket.receive(receivePacket);
-            
-            TCP returnPacket = new TCP();
-            returnPacket.deserialize(data, 0, data.length);
-
-            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
-                    returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
-            
-         
-            this.ackNum = returnPacket.getSequenceNum() + 1; //Repeatedly sets ackNum (not necessary but easy)
-            calcTimeout(returnPacket);
-
-            return returnPacket;
-
-        }catch (IOException e) {
-            System.out.println("IOException occured in receiveTCP()");
-            e.printStackTrace();
-            return null;
-        }
-    }
-
+    /**
+     * Transfer all data packets
+     */
     public boolean transferData() {
 
         Thread writerThread = new Thread(new Runnable() {
-
             @Override
             public void run() {
 
-                while(!completed || swR < swL) { //Is the second necessary?
-// System.out.println("In writerThread of sender 1");
-                    while(swR - swL == sws) {}
+                while(!completed || swR < swL) {
 
+                    while(swR - swL == sws) {}
                     if(swR >= allPackets.size()) return;
-// System.out.println("In writerThread of sender 2");
+
                     TCP sendPacket = allPackets.get(swR);
                     sendTCP(sendPacket);
 
@@ -273,15 +204,12 @@ public class TCPsender {
             }
         });
 
-
         Thread readerThread = new Thread(new Runnable() {
-
             @Override
             public void run() {
                 while(!completed) {
                     TCP receivePacket = receiveTCP();
 
-                    // int numAck = (numAcksMap.containsKey(receivePacket.getAcknowledge())) ? numAcksMap.get(receivePacket.getAcknowledge()) + 1 : 0;
                     int numAck = 0;
                     if(numAcksMap.containsKey(receivePacket.getAcknowledge())) {
                         numAck = numAcksMap.get(receivePacket.getAcknowledge()) + 1;
@@ -290,14 +218,13 @@ public class TCPsender {
                     numAcksMap.put(receivePacket.getAcknowledge(), numAck);
                     
                     seqNum = receivePacket.getAcknowledge();
-// System.out.println("In readerThread of sender 1");
+
                     while(swL < allPackets.size() && allPackets.get(swL).getSequenceNum() < seqNum) swL++;
-// System.out.println("In readerThread of sender 2");
+
                     if(swL >= allPackets.size()) completed = true;
                 }
             }
         });
-
 
         TimerTask reTransTask = new TimerTask() {
             @Override
@@ -312,12 +239,9 @@ public class TCPsender {
                         System.exit(1);
                     }
                     //Check if timeout
-                    // else if(System.nanoTime() - currPacket.getTimeStamp() > TIME_OUT) {
                     else if(System.nanoTime() - currPacket.getTimeStamp() > timeoutMap.get(currPacket.getSequenceNum())) {
                         for(int j = i; j < swR; j++) {
                             TCP retransPacket = allPackets.get(j);
-                            // System.out.println("About to retransmit: " + retransPacket);
-                            // System.out.println("With data: " + retransPacket.dataToString());
                             sendTCP(retransPacket);
                             
                             NUM_RETRANS++;
@@ -344,14 +268,15 @@ public class TCPsender {
         return true;
     }
 
-    boolean connectionTerminated = false;
-
+    boolean connectionTerminated = false; //Placed here so it is visible in threads below
+    /**
+     * Ends the connection with receiver
+     */
     public boolean terminateConnection() {
 
-        this.numRetrans = 0;
+        this.numRetrans = 0; //Last seen in establishConnection()
 
         Thread listenThread = new Thread(new Runnable() {
-
             @Override
             public void run() {
                 while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
@@ -367,7 +292,6 @@ public class TCPsender {
                 socket.close(); //We should only close once the final ack is sent, because no return ack is expected!
             }
         });
-
         listenThread.start();
 
         while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
@@ -384,6 +308,69 @@ public class TCPsender {
         return connectionTerminated;
     }
 
+    /**
+     * Simply sends the desired tcpPacket using DatagramSocket.
+     * Correct content is responsibility of caller
+     */
+    public void sendTCP(TCP tcpPacket) {
+
+        tcpPacket.setAcknowledge(this.ackNum); //Set ack field (which rarely changes)
+
+        tcpPacket.setTimeStamp(System.nanoTime()); //Set time field
+
+        byte[] serialized = tcpPacket.serialize(); //Serialize (proper checksum will be added)
+        System.out.println("About to send: " + tcpPacket);
+        
+        //Send
+        try {
+            DatagramPacket datagramPacket = new DatagramPacket(serialized, serialized.length, 
+                                        InetAddress.getByName(this.remoteIP), this.remotePort);
+
+            this.socket.send(datagramPacket);
+            
+            this.NUM_PACKETS_SENT++;
+            if((tcpPacket.getLength() >>> 3) > 0) { this.AMOUNT_DATA_TRANS += (tcpPacket.getLength() >>> 3); }
+
+            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
+                    tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
+
+        } catch(UnknownHostException e1) {
+            System.out.println("Failed to find host in sendTCP() of TCPsender");
+            e1.printStackTrace();
+            System.exit(1);
+        } catch(IOException e2) {
+            //Do nothing, since retransmission limit will take care of it
+        }
+    }
+
+    /**
+     * Receieves a TCP packet using DatagramSocket
+     */
+    public TCP receiveTCP() {
+
+        try {
+            byte[] data = new byte[this.mtu + TCP.SIZE_OF_HEADER];
+            DatagramPacket receivePacket = new DatagramPacket(data, data.length);
+            this.socket.receive(receivePacket);
+            
+            TCP returnPacket = new TCP();
+            returnPacket.deserialize(data, 0, data.length);
+
+            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
+                    returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
+            
+         
+            this.ackNum = returnPacket.getSequenceNum() + 1; //Repeatedly sets ackNum (not necessary but easy)
+            calcTimeout(returnPacket);
+
+            return returnPacket;
+
+        } catch (IOException e) {
+            System.out.println("IOException occured in receiveTCP()");
+            e.printStackTrace();
+            return null;
+        }
+    }
 
     /** Vars for calculating TIME_OUT (placed here for convenience)*/
     private long ERTT;

@@ -1,15 +1,5 @@
 public class TCPend {
 
-    /** Overall statistics that will be modified by senders and receivers*/
-    public static int AMOUNT_DATA_TRANS_TRANS = 0;
-    public static int AMOUNT_DATA_TRANS_REC = 0;
-    public static int NUM_PACKETS_SENT = 0;
-    public static int NUM_PACKETS_REC = 0;
-    public static int NUM_OOS_PACKETS_DISCARDED = 0;
-    public static int NUM_PACKETS_DISCARDED_CHECKSUM = 0;
-    public static int NUM_RETRANS = 0;
-    public static int NUM_DUPLICATE_ACKS = 0;
-
     public static void main(String[] args) {
 
         if(args.length != 12 && args.length != 8) printUsage();
@@ -53,16 +43,9 @@ public class TCPend {
             System.out.println("Created Receiver with => " + receiver);
             receiver.run();
         }
-
-        printStats();
     }
 
-    public static void printStats(){
-
-        //TODO
-    }
-
-    public static void printUsage(){
+    public static void printUsage() {
         System.out.print("Usage:\n" +
                         "Sender: java TCPend -p <port> -s <remote IP> -a <remote port> f <file name> -m <mtu> -c <sws>\n" +
                         "Receiver: java TCPend -p <port> -m <mtu> -c <sws> -f <file name>\n");

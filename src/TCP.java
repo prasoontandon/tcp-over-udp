@@ -23,7 +23,6 @@ public class TCP {
 
     public TCP(){}
 
-
     public TCP(int sn, int ack, long ts, int l, short cs, byte[] data) {
         this.sequenceNum = sn;
         this.acknowledge = ack;
@@ -94,12 +93,6 @@ public class TCP {
 
     }
 
-    // public TCP setFlags(short flags) {
-    //     this.flags = flags;
-    //     return this;
-    // }
-    
-    
     public static short calcChecksum(byte[] data) {
         int sum = 0;
         int i = 0;
@@ -213,19 +206,6 @@ public class TCP {
 
         return fieldsMatching && dataMatching;
     }
-
-    // /* (non-Javadoc)
-    //  * @see java.lang.Object#hashCode()
-    //  */
-    // @Override
-    // public int hashCode() {
-    //     final int prime = 5807;
-    //     int result = super.hashCode();
-    //     result = prime * result + checksum;
-    //     result = prime * result + destinationPort;
-    //     result = prime * result + sourcePort;
-    //     return result;
-    // }
 
     @Override
     public String toString() {
