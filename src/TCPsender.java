@@ -153,7 +153,7 @@ public class TCPsender {
                     if((recPacket == null) || (((recPacket.getLength() & TCP.SYN_FLAG) != TCP.SYN_FLAG) && 
                                             ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG))) continue;
 
-                    seqNum++; //Update sequence number because syn counts as "1 byte"
+                    seqNum = recPacket.getAcknowledge(); //Update sequence number because syn counts as "1 byte"
                     TCP ackPacket = new TCP(seqNum, ackNum, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
                     connectionEstablished = true;
                     sendTCP(ackPacket);
@@ -195,6 +195,7 @@ public class TCPsender {
                     TCP sendPacket = allPackets.get(swR);
                     sendTCP(sendPacket);
 
+                    AMOUNT_DATA_TRANS += (sendPacket.getLength() >>> 3);
                     numAcksMap.put(sendPacket.getSequenceNum(), 0);
                     numRetransMap.put(sendPacket.getSequenceNum(), 0);
                     timeoutMap.put(sendPacket.getSequenceNum(), TIME_OUT); //add the current TIME_OUT value for the segment
@@ -240,18 +241,14 @@ public class TCPsender {
                     }
                     //Check if timeout
                     else if(System.nanoTime() - currPacket.getTimeStamp() > timeoutMap.get(currPacket.getSequenceNum())) {
-                        for(int j = i; j < swR; j++) {
-                            TCP retransPacket = allPackets.get(j);
-                            sendTCP(retransPacket);
-                            
-                            NUM_RETRANS++;
-                            numRetransMap.put(retransPacket.getSequenceNum(), numRetransMap.get(retransPacket.getSequenceNum()) + 1);
-                        }
-                        return;
+                        sendTCP(currPacket);
+                        NUM_RETRANS++;
+                        numRetransMap.put(currPacket.getSequenceNum(), numRetransMap.get(currPacket.getSequenceNum()) + 1);
                     }
                     //Check if ackNum exceeded
                     else if(numAcksMap.get(currPacket.getSequenceNum()) >= 3) {
                         sendTCP(currPacket);
+                        NUM_RETRANS++;
                         numRetransMap.put(currPacket.getSequenceNum(), numRetransMap.get(currPacket.getSequenceNum()) + 1);
                     }
                 }
@@ -281,10 +278,10 @@ public class TCPsender {
             public void run() {
                 while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
                     TCP recPacket = receiveTCP();
-                    if((recPacket == null) || (((recPacket.getLength() & TCP.FIN_FLAG) != TCP.FIN_FLAG) && 
+                    if((recPacket == null) || (recPacket.getAcknowledge() != seqNum + 1) || (((recPacket.getLength() & TCP.FIN_FLAG) != TCP.FIN_FLAG) && 
                                             ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG))) continue;
 
-                    seqNum++; //Update sequence number because fin counts as "1 byte"
+                    seqNum = recPacket.getAcknowledge(); //Update sequence number because fin counts as "1 byte"
                     TCP ackPacket = new TCP(seqNum, ackNum, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
                     connectionTerminated = true;
                     sendTCP(ackPacket);
@@ -319,7 +316,6 @@ public class TCPsender {
         tcpPacket.setTimeStamp(System.nanoTime()); //Set time field
 
         byte[] serialized = tcpPacket.serialize(); //Serialize (proper checksum will be added)
-        System.out.println("About to send: " + tcpPacket);
         
         //Send
         try {
@@ -329,9 +325,8 @@ public class TCPsender {
             this.socket.send(datagramPacket);
             
             this.NUM_PACKETS_SENT++;
-            if((tcpPacket.getLength() >>> 3) > 0) { this.AMOUNT_DATA_TRANS += (tcpPacket.getLength() >>> 3); }
 
-            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
+            System.out.println("snd " + (tcpPacket.getTimeStamp() / 1000000000L) + " " + tcpPacket.getFlags() + 
                     tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
 
         } catch(UnknownHostException e1) {
@@ -356,7 +351,7 @@ public class TCPsender {
             TCP returnPacket = new TCP();
             returnPacket.deserialize(data, 0, data.length);
 
-            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
+            System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000000000L) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
             
          

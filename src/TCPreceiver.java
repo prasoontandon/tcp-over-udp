@@ -30,6 +30,7 @@ public class TCPreceiver {
     private int AMOUNT_DATA_REC;
     private int NUM_PACKETS_REC;
     private int NUM_PACKETS_DISCARDED_CHECKSUM;
+    private int NUM_PACKETS_DISCARDED_OUT_OF_SEQ;
 
     /**
      * Constructor for TCPreceiver
@@ -77,7 +78,7 @@ public class TCPreceiver {
             //Case 2a: Fin Packet
             else if((flag & TCP.FIN_FLAG) == TCP.FIN_FLAG) {
                 this.ackNum = receivePacket.getSequenceNum() + 1;
-                this.seqNum++; //Update sequence num here only, because receiver never sends data
+                this.seqNum = receivePacket.getAcknowledge(); //Update sequence num here only, because receiver never sends data
                 
                 TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
                 this.sendTCP(finAckPacket);
@@ -92,12 +93,13 @@ public class TCPreceiver {
             }
             //Case 4: Data Packet
             else if((receivePacket.getLength() >>> 3) > 0) {
-
+     
                 this.ackNum = (receivePacket.getSequenceNum() == this.ackNum) ? receivePacket.getSequenceNum() + (receivePacket.getLength() >>> 3) : this.ackNum;
-                this.AMOUNT_DATA_REC += (receivePacket.getLength() >>> 3);
-
-                byte[] packetData = (dataBuffer.containsKey(receivePacket.getSequenceNum())) ? dataBuffer.get(receivePacket.getSequenceNum()): receivePacket.getData();
-                dataBuffer.put(receivePacket.getSequenceNum(), packetData);
+                     
+                if(!dataBuffer.containsKey(receivePacket.getSequenceNum())) {
+                    dataBuffer.put(receivePacket.getSequenceNum(), receivePacket.getData());
+                    this.AMOUNT_DATA_REC += (receivePacket.getLength() >>> 3);
+                }
 
                 //Update this.ackNum to account for gaps
                 while(dataBuffer.containsKey(this.ackNum)) { this.ackNum += dataBuffer.get(this.ackNum).length; }
@@ -132,7 +134,7 @@ public class TCPreceiver {
 
             this.socket.send(datagramPacket);
 
-            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
+            System.out.println("snd " + (tcpPacket.getTimeStamp() / 1000000000L) + " " + tcpPacket.getFlags() + 
                     tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
 
         } catch(UnknownHostException e1) {
@@ -173,7 +175,7 @@ public class TCPreceiver {
                 return null;
             }
             
-            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
+            System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000000000L) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
                         
             return returnPacket;
@@ -214,8 +216,9 @@ public class TCPreceiver {
     private void printStats() {
         System.out.print(String.format("Amount of Data received: %d\n" +  
                                         "Number of packets received: %d\n" + 
+                                        "Number of out-of-sequence packets discarded: %d\n" +
                                         "Number of packets discarded due to incorrect checksum: %d\n",
-                                        this.AMOUNT_DATA_REC, this.NUM_PACKETS_REC, this.NUM_PACKETS_DISCARDED_CHECKSUM));
+                                        this.AMOUNT_DATA_REC, this.NUM_PACKETS_REC, this.NUM_PACKETS_DISCARDED_OUT_OF_SEQ, this.NUM_PACKETS_DISCARDED_CHECKSUM));
     }
 
     @Override
