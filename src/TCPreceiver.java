@@ -61,7 +61,7 @@ public class TCPreceiver {
 
             this.socket.send(datagramPacket);
 
-            System.out.println("snd " + (tcpPacket.getTimeStamp() / 1000) + " " + tcpPacket.getFlags() + 
+            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
                     tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
 
         } catch(UnknownHostException e1) {
@@ -92,6 +92,7 @@ public class TCPreceiver {
             TCP receivePacket = receiveTCP();
             if(receivePacket == null) continue;
 
+            this.NUM_PACKETS_REC++;
             byte flag = (byte)(receivePacket.getLength() & 0x07);
 
             //Case 1: Syn Packet
@@ -107,6 +108,9 @@ public class TCPreceiver {
                 TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
                 this.sendTCP(finAckPacket);
                 terminationRequested = true;
+                
+                //Lazy write
+                writeToFile();
             }
             //Case 2-b: Ack Packet for termination
             else if(((flag & TCP.ACK_FLAG) == TCP.ACK_FLAG) && terminationRequested) {
@@ -114,8 +118,9 @@ public class TCPreceiver {
             }
             //Case 4: Data Packet
             else if((receivePacket.getLength() >>> 3) > 0) {
-        // System.out.println("Received data in receiver");
+
                 this.ackNum = (receivePacket.getSequenceNum() == this.ackNum) ? receivePacket.getSequenceNum() + (receivePacket.getLength() >>> 3) : this.ackNum;
+                this.AMOUNT_DATA_REC += (receivePacket.getLength() >>> 3);
 
                 byte[] packetData = (dataBuffer.containsKey(receivePacket.getSequenceNum())) ? dataBuffer.get(receivePacket.getSequenceNum()): receivePacket.getData();
                 dataBuffer.put(receivePacket.getSequenceNum(), packetData);
@@ -131,8 +136,8 @@ public class TCPreceiver {
             }
         }
 
-        //Lazy write
-        writeToFile();
+        // //Lazy write
+        // writeToFile();
 
         socket.close(); //We should close AFTER receiving the terminating ack from sender
 
@@ -148,20 +153,26 @@ public class TCPreceiver {
     // System.out.println("REACHED SOCKET RECEIVE");
             this.socket.receive(receivePacket);
 
-// System.out.println("REACHED FIELD INIT");
-
             this.remoteIP = receivePacket.getAddress();
             this.remotePort = receivePacket.getPort();
             
             TCP returnPacket = new TCP();
-    // System.out.println("REACHED DESEARALIZE");
+            returnPacket = returnPacket.deserialize(data, 0, data.length);
 
-            returnPacket.deserialize(data, 0, data.length);
+            short savedChecksum = returnPacket.getChecksum();
+            returnPacket = returnPacket.resetChecksum();
+            byte[] tempPacket = returnPacket.serialize();
+            returnPacket = returnPacket.deserialize(tempPacket, 0, tempPacket.length);
 
-// System.out.println("returnPacket value in receiver: " + returnPacket);
-// System.out.println("returnPacket data value in receiver: " + returnPacket.dataToString());
-
-            System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000) + " " + returnPacket.getFlags() + 
+            if(savedChecksum != returnPacket.getChecksum()) {
+                System.out.println("Checksum doesn't match for packet: " + returnPacket);
+                System.out.println("Data in packet: " + returnPacket.dataToString());
+                System.out.println("Expected, Result: " + savedChecksum + " " + returnPacket.getChecksum());
+                this.NUM_PACKETS_DISCARDED_CHECKSUM++;
+                return null;
+            }
+            
+            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
                         
             return returnPacket;

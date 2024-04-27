@@ -115,10 +115,10 @@ public class TCPsender {
             System.exit(1);
         }
 
-        // for(TCP t : allPackets) {
-        //     System.out.println(t);
-        //     System.out.println(t.dataToString());
-        // }
+        for(TCP t : allPackets) {
+            System.out.println(t);
+            //System.out.println(t.dataToString());
+        }
     }
 
     /**
@@ -132,6 +132,7 @@ public class TCPsender {
         tcpPacket.setTimeStamp(System.nanoTime()); //Set time field
 
         byte[] serialized = tcpPacket.serialize(); //Serialize (proper checksum will be added)
+        System.out.println("About to send: " + tcpPacket);
         
         //Send
         try {
@@ -143,17 +144,18 @@ public class TCPsender {
             this.NUM_PACKETS_SENT++;
             if((tcpPacket.getLength() >>> 3) > 0) { this.AMOUNT_DATA_TRANS += (tcpPacket.getLength() >>> 3); }
 
-            System.out.println("snd " + (tcpPacket.getTimeStamp() / 1000000000) + " " + tcpPacket.getFlags() + 
+            System.out.println("snd " + String.format("%.2f", (tcpPacket.getTimeStamp() / 1e13)) + " " + tcpPacket.getFlags() + 
                     tcpPacket.getSequenceNum() + " " + (tcpPacket.getLength() >>> 3) + " " + tcpPacket.getAcknowledge());
+
+            // System.out.println("About to send: " + tcpPacket);
+            // System.out.println("With data: " + tcpPacket.dataToString());
 
         } catch(UnknownHostException e1) {
             System.out.println("Failed to find host in sendTCP() of TCPsender");
             e1.printStackTrace();
             System.exit(1);
         } catch(IOException e2) {
-            System.out.println("Failed to send packet in sendTCP() of TCPsender");
-            e2.printStackTrace();
-            System.exit(1);
+            //Do nothing
         }
     }
 
@@ -169,6 +171,7 @@ public class TCPsender {
         if(!this.terminateConnection()) return;
 
         //Print statistics only when everything goes well
+        try{ Thread.sleep((long)(500)); } catch(InterruptedException e) {}
         this.printStats();
     }
 
@@ -211,7 +214,9 @@ public class TCPsender {
             try{ Thread.sleep((long)(this.TIME_OUT/1e+6)); } catch(InterruptedException e) { continue; }
         }
 
-        this.NUM_RETRANS += numRetrans;
+        if(numRetrans >= TCP.MAX_NUM_RETRANS) { this.socket.close(); return connectionEstablished; }
+
+        this.NUM_RETRANS += numRetrans - 1;
 
         numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately
         return connectionEstablished;
@@ -227,7 +232,7 @@ public class TCPsender {
             TCP returnPacket = new TCP();
             returnPacket.deserialize(data, 0, data.length);
 
-            System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000000000) + " " + returnPacket.getFlags() + 
+            System.out.println("rcv " + String.format("%.2f", (returnPacket.getTimeStamp() / 1e13)) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
             
          
@@ -280,7 +285,7 @@ public class TCPsender {
                     int numAck = 0;
                     if(numAcksMap.containsKey(receivePacket.getAcknowledge())) {
                         numAck = numAcksMap.get(receivePacket.getAcknowledge()) + 1;
-                        NUM_DUPLICATE_ACKS++;
+                        if(numAck > 1) { NUM_DUPLICATE_ACKS++; }
                     }
                     numAcksMap.put(receivePacket.getAcknowledge(), numAck);
                     
@@ -303,6 +308,7 @@ public class TCPsender {
                     //If numRetrans exceeded for any packet, we exit
                     if (numRetransMap.get(currPacket.getSequenceNum()) >= 16) {
                         System.out.println("Number of Retransmission exceeded for " + currPacket);
+                        System.out.println("Data in packet: " + currPacket.dataToString());
                         System.exit(1);
                     }
                     //Check if timeout
@@ -310,6 +316,8 @@ public class TCPsender {
                     else if(System.nanoTime() - currPacket.getTimeStamp() > timeoutMap.get(currPacket.getSequenceNum())) {
                         for(int j = i; j < swR; j++) {
                             TCP retransPacket = allPackets.get(j);
+                            // System.out.println("About to retransmit: " + retransPacket);
+                            // System.out.println("With data: " + retransPacket.dataToString());
                             sendTCP(retransPacket);
                             
                             NUM_RETRANS++;
@@ -369,7 +377,9 @@ public class TCPsender {
             try{ Thread.sleep((long)(this.TIME_OUT/1e+6)); } catch(InterruptedException e) { continue; }
         }
 
-        this.NUM_RETRANS += numRetrans;
+        if(numRetrans >= TCP.MAX_NUM_RETRANS) { this.socket.close(); return connectionTerminated; }
+
+        this.NUM_RETRANS += numRetrans - 1;
         numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately
         return connectionTerminated;
     }

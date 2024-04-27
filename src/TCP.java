@@ -77,7 +77,7 @@ public class TCP {
         return this;
     }
     public TCP resetChecksum() {
-        this.checksum = 0;
+        this.checksum = (short)0;
         return this;
     }
 
@@ -156,8 +156,8 @@ public class TCP {
         if (this.checksum == 0) {
             bb.rewind();
 
-            this.checksum = calcChecksum(packet);
-            bb.putShort(22, this.checksum);
+            short tempChecksum = calcChecksum(packet);
+            bb.putShort(22, tempChecksum);
         }
         return packet;
     }
