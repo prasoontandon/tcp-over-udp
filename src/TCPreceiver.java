@@ -66,7 +66,6 @@ public class TCPreceiver {
             TCP receivePacket = receiveTCP();
             if(receivePacket == null) continue;
 
-            this.NUM_PACKETS_REC++;
             byte flag = (byte)(receivePacket.getLength() & 0x07);
 
             //Case 1: Syn Packet
@@ -75,23 +74,15 @@ public class TCPreceiver {
                 TCP synAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.SYN_FLAG + TCP.ACK_FLAG, (short)0, null);
                 this.sendTCP(synAckPacket);
             }
-            //Case 2a: Fin Packet
+            //Case 2: Fin Packet
             else if((flag & TCP.FIN_FLAG) == TCP.FIN_FLAG) {
                 this.ackNum = receivePacket.getSequenceNum() + 1;
                 this.seqNum = receivePacket.getAcknowledge(); //Update sequence num here only, because receiver never sends data
                 
-                TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
-                this.sendTCP(finAckPacket);
-                terminationRequested = true;
-                
-                //Lazy write
-                writeToFile();
+                //Call termination() method to handle closing of the socket
+                terminateConnection();
             }
-            //Case 2b: Ack Packet for termination
-            else if(((flag & TCP.ACK_FLAG) == TCP.ACK_FLAG) && terminationRequested) {
-                isRunning = false;
-            }
-            //Case 4: Data Packet
+            //Case 3: Data Packet
             else if((receivePacket.getLength() >>> 3) > 0) {
      
                 this.ackNum = (receivePacket.getSequenceNum() == this.ackNum) ? receivePacket.getSequenceNum() + (receivePacket.getLength() >>> 3) : this.ackNum;
@@ -108,11 +99,42 @@ public class TCPreceiver {
                 this.sendTCP(ackPacket);
             }
         }
+    }
 
-        socket.close(); //We should close AFTER receiving the terminating ack from sender
+    boolean connectionTerminated = false; //Placed here so it is visible in threads below
+    int numRetrans  = 0;
+    /**
+     * Ends the connection with sender
+     */
+    public void terminateConnection() {
 
-        //Print statistics only when everything goes well
+        Thread listenThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
+                    TCP recPacket = receiveTCP();
+                    if((recPacket == null) || (recPacket.getAcknowledge() != seqNum + 1) || 
+                                ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG)) continue;
+
+                    connectionTerminated = true; //Can terminate once we receive an ACK from the sender for the FIN-ACK we sent
+                }
+            }
+        });
+        listenThread.start();
+
+        while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
+            TCP finAckPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), TCP.FIN_FLAG + TCP.ACK_FLAG, (short)0, null);
+            this.sendTCP(finAckPacket);
+            numRetrans++;
+            try{ Thread.sleep((long)(100)); } catch(InterruptedException e) { continue; }
+        }
+
+        //Lazy write
+        writeToFile();
+
+        this.socket.close();
         this.printStats();
+        System.exit(0);
     }
 
     /**
@@ -178,11 +200,10 @@ public class TCPreceiver {
             System.out.println("rcv " + (returnPacket.getTimeStamp() / 1000000000L) + " " + returnPacket.getFlags() + 
                     returnPacket.getSequenceNum() + " " + (returnPacket.getLength() >>> 3) + " " + returnPacket.getAcknowledge());
                         
+            this.NUM_PACKETS_REC++;
             return returnPacket;
 
         } catch (IOException e) {
-            System.out.println("IOException occured in receiveTCP()");
-            e.printStackTrace();
             return null;
         }
     }

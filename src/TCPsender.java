@@ -236,7 +236,6 @@ public class TCPsender {
                     //If numRetrans exceeded for any packet, we exit
                     if (numRetransMap.get(currPacket.getSequenceNum()) >= 16) {
                         System.out.println("Number of Retransmission exceeded for " + currPacket);
-                        System.out.println("Data in packet: " + currPacket.dataToString());
                         System.exit(1);
                     }
                     //Check if timeout
@@ -276,17 +275,20 @@ public class TCPsender {
         Thread listenThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                while(!connectionTerminated && numRetrans < TCP.MAX_NUM_RETRANS) {
-                    TCP recPacket = receiveTCP();
-                    if((recPacket == null) || (recPacket.getAcknowledge() != seqNum + 1) || (((recPacket.getLength() & TCP.FIN_FLAG) != TCP.FIN_FLAG) && 
+                int expectedSeqNum = seqNum + 1;
+                while(true) {
+                    TCP recPacket = receiveTCP(); //Listen for FIN-ACK from receiver (may need to do this multiple times)
+
+                    if(recPacket == null) break;
+
+                    else if((recPacket.getAcknowledge() != expectedSeqNum) || (((recPacket.getLength() & TCP.FIN_FLAG) != TCP.FIN_FLAG) && 
                                             ((recPacket.getLength() & TCP.ACK_FLAG) != TCP.ACK_FLAG))) continue;
 
                     seqNum = recPacket.getAcknowledge(); //Update sequence number because fin counts as "1 byte"
                     TCP ackPacket = new TCP(seqNum, ackNum, System.nanoTime(), (int)TCP.ACK_FLAG, (short)0, null);
-                    connectionTerminated = true;
+                    connectionTerminated = true; //From our perspective, we are good to close socket b/c FIN-ACK received
                     sendTCP(ackPacket);
                 }
-                socket.close(); //We should only close once the final ack is sent, because no return ack is expected!
             }
         });
         listenThread.start();
@@ -295,14 +297,20 @@ public class TCPsender {
             TCP finPacket = new TCP(this.seqNum, this.ackNum, System.nanoTime(), (int)TCP.FIN_FLAG, (short)0, null);
             this.sendTCP(finPacket);
             numRetrans++;
-            try{ Thread.sleep((long)(this.TIME_OUT/1e+6)); } catch(InterruptedException e) { continue; }
+            try{ Thread.sleep((long)(1000)); } catch(InterruptedException e) { continue; }
         }
 
-        if(numRetrans >= TCP.MAX_NUM_RETRANS) { this.socket.close(); return connectionTerminated; }
+        if(numRetrans >= TCP.MAX_NUM_RETRANS) { 
+            this.socket.close(); 
+            return connectionTerminated; 
+        }
+        else {
+            try{ Thread.sleep((long)(5000)); } catch(InterruptedException e) { }
+            this.socket.close(); //We can close after waiting for a while, in-case final ACk from sender is lost
 
-        this.NUM_RETRANS += numRetrans - 1;
-        numRetrans = TCP.MAX_NUM_RETRANS; //This line prevents the listenThread from continuously running when socket is closed immediately
-        return connectionTerminated;
+            this.NUM_RETRANS += numRetrans - 1;
+            return connectionTerminated;
+        }
     }
 
     /**
@@ -361,8 +369,6 @@ public class TCPsender {
             return returnPacket;
 
         } catch (IOException e) {
-            System.out.println("IOException occured in receiveTCP()");
-            e.printStackTrace();
             return null;
         }
     }
